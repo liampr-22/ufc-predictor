@@ -34,6 +34,7 @@ class Fighter(Base):
     dob: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     weight_class: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     elo_rating: Mapped[float] = mapped_column(Float, nullable=False, default=1500.0)
+    ufcstats_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True)
 
     # Relationships
     fights_as_a: Mapped[list["Fight"]] = relationship(
@@ -55,6 +56,7 @@ class Fighter(Base):
     __table_args__ = (
         Index("ix_fighters_name", "name"),
         Index("ix_fighters_weight_class", "weight_class"),
+        Index("ix_fighters_ufcstats_id", "ufcstats_id", unique=True),
     )
 
 
@@ -76,6 +78,7 @@ class Fight(Base):
     method: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # KO/TKO, SUB, DEC, NC
     round: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     time: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)     # "4:32" format
+    ufcstats_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True)
 
     # Relationships
     fighter_a: Mapped["Fighter"] = relationship(
@@ -101,6 +104,7 @@ class Fight(Base):
         Index("ix_fights_date", "date"),
         Index("ix_fights_fighter_a_id", "fighter_a_id"),
         Index("ix_fights_fighter_b_id", "fighter_b_id"),
+        Index("ix_fights_ufcstats_id", "ufcstats_id", unique=True),
     )
 
 

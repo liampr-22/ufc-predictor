@@ -21,6 +21,7 @@ class FighterRead(BaseModel):
     dob: Optional[date] = None
     weight_class: Optional[str] = None
     elo_rating: float
+    ufcstats_id: Optional[str] = None
 
 
 class FightRead(BaseModel):
@@ -35,6 +36,7 @@ class FightRead(BaseModel):
     method: Optional[str] = None
     round: Optional[int] = None
     time: Optional[str] = None
+    ufcstats_id: Optional[str] = None
 
 
 class FightStatsRead(BaseModel):
