@@ -27,6 +27,7 @@ from scraper.parser import (
     parse_fighter_profile,
 )
 from scraper.ufcstats import UFCStatsScraper
+from ml.elo import run_replay
 
 logging.basicConfig(
     level=logging.INFO,
@@ -395,6 +396,11 @@ def main() -> None:
                 since_date = (latest + timedelta(days=1)) if latest else date(1993, 11, 12)
                 logger.info("=== INCREMENTAL SCRAPE since %s ===", since_date)
                 events_done, fights_done = scrape_events(session, scraper, since=since_date)
+
+    if fights_done > 0:
+        logger.info("Refreshing Elo ratings (%d new fights)…", fights_done)
+        run_replay(database_url)
+        logger.info("Elo ratings updated.")
 
     logger.info(
         "Done. Processed %d events, inserted %d fights.",
