@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 FEATURE_COLS: list[str] = [f.name for f in dataclasses.fields(FeatureVector)]
 MODEL_FILENAME = "xgb_model.joblib"
 REPORT_FILENAME = "training_report.json"
+METHOD_MODEL_FILENAME = "method_model.joblib"
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +377,11 @@ def _run_with_session(
             json.dump(report_dict, f, indent=2, default=str)
         logger.info("Model saved to %s", out / MODEL_FILENAME)
         logger.info("Report saved to %s", out / REPORT_FILENAME)
+
+    # 11. Train and save method of victory model
+    from ml.method_train import _run_method_pipeline  # lazy — avoids circular import
+    method_report = _run_method_pipeline(session, output_dir=output_dir, report=report)
+    report_dict["method_model"] = method_report["method_model"]
 
     return report_dict
 

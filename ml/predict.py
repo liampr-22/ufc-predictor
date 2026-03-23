@@ -1,6 +1,6 @@
 """
-Inference wrapper — loads trained model and returns predictions.
-Implemented in Phase 5 — Outcome Prediction Model.
+Inference wrapper — loads trained models and returns predictions.
+Implemented in Phase 5 (outcome model) and Phase 6 (method model).
 """
 from __future__ import annotations
 
@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import Optional
 
 import joblib
+import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
 from ml.features import FeatureBuilder
+from ml.method_train import METHOD_LABEL_DEC, METHOD_LABEL_KO, METHOD_LABEL_SUB, METHOD_MODEL_FILENAME
 from ml.train import FEATURE_COLS, MODEL_FILENAME
 
 logger = logging.getLogger(__name__)
@@ -21,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 class Predictor:
     """
-    Loads the serialised calibrated model once at init and exposes a single
-    predict_proba() method.
+    Loads both serialised calibrated models once at init and exposes
+    predict_proba() (outcome only) and predict() (outcome + method).
 
     Designed to be instantiated once at API startup and reused for all
     requests — joblib.load is not cheap.
@@ -30,24 +32,60 @@ class Predictor:
     Parameters
     ----------
     model_dir:
-        Directory containing xgb_model.joblib (default: "models/").
+        Directory containing xgb_model.joblib and method_model.joblib
+        (default: "models/").
 
     Raises
     ------
     FileNotFoundError
-        If the model file does not exist. Fail-fast at startup so the issue
-        is caught immediately rather than on the first prediction request.
+        If either model file does not exist.
     """
 
     def __init__(self, model_dir: str = "models/") -> None:
         model_path = Path(model_dir) / MODEL_FILENAME
+        method_model_path = Path(model_dir) / METHOD_MODEL_FILENAME
+
         if not model_path.exists():
             raise FileNotFoundError(
-                f"Model artifact not found at {model_path}. "
+                f"Outcome model not found at {model_path}. "
                 f"Run `python -m ml.train` to train the model first."
             )
+        if not method_model_path.exists():
+            raise FileNotFoundError(
+                f"Method model not found at {method_model_path}. "
+                f"Run `python -m ml.train` to train the model first."
+            )
+
         self._model = joblib.load(model_path)
-        logger.info("Loaded model from %s", model_path)
+        self._method_model = joblib.load(method_model_path)
+        logger.info("Loaded outcome model from %s", model_path)
+        logger.info("Loaded method model from %s", method_model_path)
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _build_row(
+        self,
+        session: Session,
+        fighter_a_id: int,
+        fighter_b_id: int,
+        as_of_date: date,
+    ) -> np.ndarray:
+        """Build a single-row feature matrix as a numpy array."""
+        builder = FeatureBuilder(session)
+        fv = builder.build(fighter_a_id, fighter_b_id, as_of_date)
+
+        feat_dict = fv.to_dict()
+        for key, val in feat_dict.items():
+            if isinstance(val, bool):
+                feat_dict[key] = int(val)
+
+        return pd.DataFrame([feat_dict])[FEATURE_COLS].values
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
 
     def predict_proba(
         self,
@@ -81,15 +119,62 @@ class Predictor:
         if as_of_date is None:
             as_of_date = date.today()
 
-        builder = FeatureBuilder(session)
-        fv = builder.build(fighter_a_id, fighter_b_id, as_of_date)
-
-        feat_dict = fv.to_dict()
-        # Cast bool columns to int (low_confidence_a, low_confidence_b)
-        for key, val in feat_dict.items():
-            if isinstance(val, bool):
-                feat_dict[key] = int(val)
-
-        row = pd.DataFrame([feat_dict])[FEATURE_COLS]
-        proba = self._model.predict_proba(row.values)[0, 1]
+        row = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
+        proba = self._model.predict_proba(row)[0, 1]
         return float(proba)
+
+    def predict(
+        self,
+        session: Session,
+        fighter_a_id: int,
+        fighter_b_id: int,
+        as_of_date: Optional[date] = None,
+    ) -> dict:
+        """
+        Return combined outcome and method-of-victory probabilities.
+
+        Both models share the same feature vector, built once and passed
+        to each model.
+
+        Parameters
+        ----------
+        session:
+            Active SQLAlchemy session.
+        fighter_a_id, fighter_b_id:
+            Fighter database IDs.
+        as_of_date:
+            Feature cut-off date. Defaults to today.
+
+        Returns
+        -------
+        dict
+            {
+                "win_prob_a": float,           # P(fighter_a wins)
+                "method_probs": {
+                    "ko_tko":     float,       # P(fight ends by KO/TKO)
+                    "submission": float,       # P(fight ends by submission)
+                    "decision":   float,       # P(fight ends by decision)
+                }
+            }
+
+        Raises
+        ------
+        ValueError
+            If either fighter ID is not found.
+        """
+        if as_of_date is None:
+            as_of_date = date.today()
+
+        row = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
+
+        win_prob = float(self._model.predict_proba(row)[0, 1])
+        method_proba = self._method_model.predict_proba(row)[0]  # shape [3]
+
+        return {
+            "win_prob_a": win_prob,
+            "method_probs": {
+                "ko_tko":     float(method_proba[METHOD_LABEL_KO]),
+                "submission": float(method_proba[METHOD_LABEL_SUB]),
+                "decision":   float(method_proba[METHOD_LABEL_DEC]),
+            },
+        }
