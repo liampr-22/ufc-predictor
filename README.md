@@ -2,7 +2,7 @@
 
 A machine learning system for UFC fight outcome prediction, style matchup analysis, and implied odds generation.
 
-**Stack:** Python · FastAPI · PostgreSQL · XGBoost · BeautifulSoup · Docker · React
+**Stack:** Python · FastAPI · PostgreSQL · LightGBM · BeautifulSoup · Docker · React
 
 ---
 
