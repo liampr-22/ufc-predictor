@@ -60,8 +60,9 @@ ufc-predictor/
 │   └── pydantic_models.py # Request/response schemas
 ├── ml/
 │   ├── features.py        # Feature engineering pipeline
-│   ├── train.py           # Model training and serialisation
-│   ├── predict.py         # Inference wrapper
+│   ├── train.py           # Outcome model training and serialisation
+│   ├── method_train.py    # Method of victory model training
+│   ├── predict.py         # Inference wrapper (outcome + method)
 │   ├── elo.py             # Elo rating system
 │   └── calibration.py     # Probability calibration and odds
 ├── api/
@@ -72,7 +73,9 @@ ufc-predictor/
 ├── tests/
 │   ├── test_api.py
 │   ├── test_features.py
-│   └── test_model.py
+│   ├── test_model.py
+│   ├── test_method_model.py
+│   └── test_elo.py
 ├── docker-compose.yml
 ├── Dockerfile
 └── README.md
