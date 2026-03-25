@@ -162,7 +162,9 @@ class TestProbToAmericanOdds:
         for p in (0.30, 0.40, 0.45):
             odds = prob_to_american_odds(p)
             recovered = american_odds_to_implied_prob(int(round(odds)))
-            assert math.isclose(p, recovered, rel_tol=1e-3)
+            # Underdogs have larger integer-rounding errors than favourites;
+            # ±0.5 on positive odds with p≈0.30 shifts the implied prob by ~0.15%.
+            assert math.isclose(p, recovered, rel_tol=2e-3)
 
     def test_raises_on_boundary(self):
         with pytest.raises(ValueError):

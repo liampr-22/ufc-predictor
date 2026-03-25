@@ -11,7 +11,6 @@ from api.routers.admin import router as admin_router
 from api.routers.events import router as events_router
 from api.routers.fighters import router as fighters_router
 from api.routers.predict import router as predict_router
-from ml.predict import Predictor
 from models.pydantic_models import HealthResponse
 from models.schema import Fight
 
@@ -21,9 +20,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
+        from ml.predict import Predictor  # deferred to avoid importing ML deps at collection time
         app.state.predictor = Predictor()
         logger.info("Predictor loaded successfully")
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ImportError) as exc:
         app.state.predictor = None
         logger.warning("Models not found — prediction endpoints will return 503. (%s)", exc)
     yield
