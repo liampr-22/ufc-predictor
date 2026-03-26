@@ -240,9 +240,8 @@ class TestAdminScrape:
 
     def test_scrape_authorized(self, client, monkeypatch):
         monkeypatch.setenv("ADMIN_API_KEY", "test-secret")
-        # Also patch subprocess.Popen so we don't actually launch a process
-        import subprocess
-        monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: None)
+        # Patch the job function so no real scraping or DB writes occur
+        monkeypatch.setattr("scraper.jobs.run_incremental_scrape", lambda **kw: None)
         r = client.post("/admin/scrape", headers={"X-Api-Key": "test-secret"})
         assert r.status_code == 200
         data = r.json()

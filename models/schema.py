@@ -219,6 +219,22 @@ class RoundStats(Base):
     )
 
 
+class ScrapeJob(Base):
+    __tablename__ = "scrape_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    fights_added: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # "running" | "success" | "failed"
+    error: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+
+    __table_args__ = (
+        Index("ix_scrape_jobs_started_at", "started_at"),
+        Index("ix_scrape_jobs_status", "status"),
+    )
+
+
 class HistoricalOdds(Base):
     __tablename__ = "historical_odds"
 

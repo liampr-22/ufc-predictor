@@ -1,8 +1,6 @@
 import os
-import subprocess
-import sys
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 
 from models.pydantic_models import ScrapeResponse
 
@@ -17,16 +15,21 @@ def _verify_api_key(x_api_key: str = Header(...)):
 
 
 @router.post("/scrape", response_model=ScrapeResponse, dependencies=[Depends(_verify_api_key)])
-def trigger_scrape():
+def trigger_scrape(request: Request, background_tasks: BackgroundTasks):
     """
     Trigger an incremental scrape of UFCStats.
 
     Authenticated via X-Api-Key header. The scrape runs as a background
-    subprocess — this endpoint returns immediately.
+    task — this endpoint returns immediately.
     """
-    subprocess.Popen(
-        [sys.executable, "-m", "scraper.scheduler"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    from scraper.jobs import run_incremental_scrape
+
+    database_url = os.environ.get("DATABASE_URL", "")
+    retrain_threshold = int(os.environ.get("RETRAIN_THRESHOLD", "5"))
+    background_tasks.add_task(
+        run_incremental_scrape,
+        database_url=database_url,
+        app=request.app,
+        retrain_threshold=retrain_threshold,
     )
     return ScrapeResponse(status="accepted", message="Incremental scrape started")

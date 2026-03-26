@@ -18,6 +18,7 @@ class HealthResponse(BaseModel):
     status: str
     timestamp: str
     last_scrape: Optional[str] = None
+    last_successful_scrape: Optional[str] = None
 
 
 class FighterSearchResult(BaseModel):
