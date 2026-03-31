@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -20,6 +21,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure all tables exist (idempotent — won't alter existing columns)
+    from api.database import engine
+    from models.schema import Base
+    Base.metadata.create_all(bind=engine)
+
     try:
         from ml.predict import Predictor  # deferred to avoid importing ML deps at collection time
         app.state.predictor = Predictor()
@@ -65,6 +71,14 @@ app = FastAPI(
     description="ML-powered UFC fight outcome prediction, style matchup analysis, and implied odds generation.",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+_allowed_origins = os.environ.get("ALLOWED_ORIGINS", "*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
 )
 
 app.include_router(fighters_router)

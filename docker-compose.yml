@@ -27,11 +27,23 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-ufc}:${POSTGRES_PASSWORD:-ufc_password}@db:5432/${POSTGRES_DB:-ufc_predictor}
       RETRAIN_THRESHOLD: ${RETRAIN_THRESHOLD:-5}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
     ports:
       - "8000:8000"
     volumes:
       - .:/app
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ""
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
 
 volumes:
   postgres_data:
