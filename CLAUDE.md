@@ -21,7 +21,7 @@ End-to-end ML system for UFC fight outcome prediction, style matchup analysis, a
 # Start all services
 docker-compose up --build
 
-# Full initial scrape (15–30 min)
+# Full initial scrape (4–5 hrs — fetches all fighter profiles then all fight pages)
 docker-compose exec api python -m scraper.scheduler --full
 
 # Incremental scrape
