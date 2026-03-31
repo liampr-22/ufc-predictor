@@ -247,8 +247,8 @@ def parse_event_page(html: str, event_name: str, event_date: Optional[date]) -> 
         if not cols:
             continue
 
-        # Fighter links are always in the first column
-        fighter_links = cols[0].find_all("a")
+        # Fighter links are in the second column (col[0] is the result status link)
+        fighter_links = cols[1].find_all("a")
         if len(fighter_links) < 2:
             continue
 
@@ -285,47 +285,53 @@ def parse_event_page(html: str, event_name: str, event_date: Optional[date]) -> 
 
 # ── Fight detail ──────────────────────────────────────────────────────────────
 
-def _parse_totals_row(cols: list) -> dict:
+def _parse_totals_row(cols: list, fighter_index: int = 0) -> dict:
     """
-    Parse one fighter's row from a totals table (10 columns).
+    Parse one fighter's stats from a totals table row (10 columns).
     Cols: Fighter | KD | Sig.str | Sig.str% | Total str | TD | TD% | Sub.att | Rev | Ctrl
-    """
-    link = cols[0].find("a")
-    fighter_url = (link.get("href") or "").strip() if link else None
 
-    ssl, ssa = _parse_of(cols[2].get_text(strip=True))
-    tsl, tsa = _parse_of(cols[4].get_text(strip=True))
-    tdl, tda = _parse_of(cols[5].get_text(strip=True))
+    Each cell now contains two <p class="b-fight-details__table-text"> elements,
+    one per fighter. fighter_index selects which fighter (0=A, 1=B).
+    """
+    links = cols[0].find_all("a")
+    fighter_url = (links[fighter_index].get("href") or "").strip() if len(links) > fighter_index else None
+
+    ssl, ssa = _parse_of(_get_cell_text(cols[2], fighter_index))
+    tsl, tsa = _parse_of(_get_cell_text(cols[4], fighter_index))
+    tdl, tda = _parse_of(_get_cell_text(cols[5], fighter_index))
 
     return {
         "fighter_ufcstats_id": _extract_id(fighter_url),
-        "knockdowns": _parse_int(cols[1].get_text(strip=True)),
+        "knockdowns": _parse_int(_get_cell_text(cols[1], fighter_index)),
         "significant_strikes_landed": ssl,
         "significant_strikes_attempted": ssa,
         "total_strikes_landed": tsl,
         "total_strikes_attempted": tsa,
         "takedowns_landed": tdl,
         "takedowns_attempted": tda,
-        "submission_attempts": _parse_int(cols[7].get_text(strip=True)),
-        "reversals": _parse_int(cols[8].get_text(strip=True)),
-        "control_time_seconds": _parse_ctrl(cols[9].get_text(strip=True)),
+        "submission_attempts": _parse_int(_get_cell_text(cols[7], fighter_index)),
+        "reversals": _parse_int(_get_cell_text(cols[8], fighter_index)),
+        "control_time_seconds": _parse_ctrl(_get_cell_text(cols[9], fighter_index)),
     }
 
 
-def _parse_sig_row(cols: list) -> dict:
+def _parse_sig_row(cols: list, fighter_index: int = 0) -> dict:
     """
-    Parse one fighter's row from a significant strikes table (9 columns).
+    Parse one fighter's stats from a significant strikes table row (9 columns).
     Cols: Fighter | Sig.str | Sig.str% | Head | Body | Leg | Distance | Clinch | Ground
-    """
-    link = cols[0].find("a")
-    fighter_url = (link.get("href") or "").strip() if link else None
 
-    hl, ha = _parse_of(cols[3].get_text(strip=True))
-    bl, ba = _parse_of(cols[4].get_text(strip=True))
-    ll, la = _parse_of(cols[5].get_text(strip=True))
-    dl, da = _parse_of(cols[6].get_text(strip=True))
-    cl, ca = _parse_of(cols[7].get_text(strip=True))
-    gl, ga = _parse_of(cols[8].get_text(strip=True))
+    Each cell now contains two <p class="b-fight-details__table-text"> elements,
+    one per fighter. fighter_index selects which fighter (0=A, 1=B).
+    """
+    links = cols[0].find_all("a")
+    fighter_url = (links[fighter_index].get("href") or "").strip() if len(links) > fighter_index else None
+
+    hl, ha = _parse_of(_get_cell_text(cols[3], fighter_index))
+    bl, ba = _parse_of(_get_cell_text(cols[4], fighter_index))
+    ll, la = _parse_of(_get_cell_text(cols[5], fighter_index))
+    dl, da = _parse_of(_get_cell_text(cols[6], fighter_index))
+    cl, ca = _parse_of(_get_cell_text(cols[7], fighter_index))
+    gl, ga = _parse_of(_get_cell_text(cols[8], fighter_index))
 
     return {
         "fighter_ufcstats_id": _extract_id(fighter_url),
@@ -351,6 +357,15 @@ def _merge_stats(totals: dict, sig: dict) -> dict:
         if k != "fighter_ufcstats_id":
             merged[k] = v
     return merged
+
+
+def _get_cell_text(col: Tag, idx: int) -> str:
+    """Return text of the idx-th <p class="b-fight-details__table-text"> in a cell.
+    Falls back to full cell text if the multi-p structure is absent."""
+    ps = col.find_all("p", class_="b-fight-details__table-text")
+    if len(ps) > idx:
+        return ps[idx].get_text(strip=True)
+    return col.get_text(strip=True)
 
 
 def parse_fight_page(html: str, url: str) -> Optional[dict]:
@@ -408,25 +423,30 @@ def parse_fight_page(html: str, url: str) -> Optional[dict]:
 
     # ── Fight result ──────────────────────────────────────────────────────────
     fight_info: dict[str, str] = {}
-    for li in soup.select("div.b-fight-details__fight-info li.b-fight-details__list-item"):
-        label_el = li.find("i", class_="b-fight-details__label")
-        if not label_el:
-            continue
-        label = label_el.get_text(strip=True).rstrip(":").upper()
-        label_el.extract()
-        fight_info[label] = _text(li)
+    content_div = soup.find("div", class_="b-fight-details__content")
+    if content_div:
+        text_para = content_div.find("p", class_="b-fight-details__text")
+        if text_para:
+            items = [text_para.find("i", class_="b-fight-details__text-item_first")]
+            items += text_para.find_all("i", class_="b-fight-details__text-item")
+            for item in items:
+                if not item:
+                    continue
+                label_el = item.find("i", class_="b-fight-details__label")
+                if not label_el:
+                    continue
+                label = label_el.get_text(strip=True).rstrip(":").upper()
+                label_el.extract()
+                fight_info[label] = _text(item)
 
     result["method"] = fight_info.get("METHOD") or None
     result["round"] = _parse_int(fight_info.get("ROUND", ""))
     result["time"] = fight_info.get("TIME") or None
 
     # ── Stats tables ──────────────────────────────────────────────────────────
-    # UFCStats fight pages have 2 + 2*N tables where N = number of rounds:
-    #   tables[0]   overall totals
-    #   tables[1]   overall sig strikes
-    #   tables[2]   round 1 totals
-    #   tables[3]   round 1 sig strikes
-    #   tables[4]   round 2 totals  ... etc.
+    # UFCStats fight pages now have 2 tables (totals + sig strikes).
+    # Each table has one row where every cell contains two <p> elements —
+    # one per fighter. fighter_index 0=A, 1=B.
     tables = soup.select("table.b-fight-details__table.js-fight-table")
 
     stats_a: dict = {}
@@ -434,21 +454,19 @@ def parse_fight_page(html: str, url: str) -> Optional[dict]:
 
     if len(tables) >= 1:
         rows = tables[0].select("tbody tr")
-        if len(rows) >= 2:
-            cols_a = rows[0].find_all("td")
-            cols_b = rows[1].find_all("td")
-            if len(cols_a) >= 10 and len(cols_b) >= 10:
-                stats_a = _parse_totals_row(cols_a)
-                stats_b = _parse_totals_row(cols_b)
+        if rows:
+            cols = rows[0].find_all("td")
+            if len(cols) >= 10:
+                stats_a = _parse_totals_row(cols, 0)
+                stats_b = _parse_totals_row(cols, 1)
 
     if len(tables) >= 2:
         rows = tables[1].select("tbody tr")
-        if len(rows) >= 2:
-            cols_a = rows[0].find_all("td")
-            cols_b = rows[1].find_all("td")
-            if len(cols_a) >= 9 and len(cols_b) >= 9:
-                stats_a = _merge_stats(stats_a, _parse_sig_row(cols_a))
-                stats_b = _merge_stats(stats_b, _parse_sig_row(cols_b))
+        if rows:
+            cols = rows[0].find_all("td")
+            if len(cols) >= 9:
+                stats_a = _merge_stats(stats_a, _parse_sig_row(cols, 0))
+                stats_b = _merge_stats(stats_b, _parse_sig_row(cols, 1))
 
     result["stats_a"] = stats_a
     result["stats_b"] = stats_b
