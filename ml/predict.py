@@ -121,7 +121,9 @@ class Predictor:
 
         row = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
         proba = self._model.predict_proba(row)[0, 1]
-        return float(proba)
+        # Shrink toward 50/50 to avoid overconfident moneylines.
+        proba = 0.70 * float(proba) + 0.30 * 0.5
+        return proba
 
     def predict(
         self,
@@ -167,7 +169,9 @@ class Predictor:
 
         row = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
 
-        win_prob = float(self._model.predict_proba(row)[0, 1])
+        win_prob = self._model.predict_proba(row)[0, 1]
+        # Shrink toward 50/50 to avoid overconfident moneylines.
+        win_prob = 0.70 * float(win_prob) + 0.30 * 0.5
         method_proba = self._method_model.predict_proba(row)[0]  # shape [3]
 
         return {

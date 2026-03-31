@@ -29,9 +29,12 @@ GRAPPLER_SCORE_CAP = 5.0   # sub attempts per fight — caps grappler score at 1
 BRAWLER_SCORE_CAP = 3.0    # knockdowns per fight — caps brawler score at 1.0
 
 # Method string sets for finishing-rate computation
-_KO_METHODS = frozenset({"KO", "KO/TKO", "TKO"})
+_KO_METHODS = frozenset({"KO", "KO/TKO", "TKO", "TKO - DOCTOR'S STOPPAGE"})
 _SUB_METHODS = frozenset({"SUB", "SUBMISSION"})
-_DEC_METHODS = frozenset({"DEC", "U-DEC", "S-DEC", "M-DEC", "UD", "SD", "MD"})
+_DEC_METHODS = frozenset({
+    "DEC", "U-DEC", "S-DEC", "M-DEC", "UD", "SD", "MD",
+    "DECISION - UNANIMOUS", "DECISION - SPLIT", "DECISION - MAJORITY",
+})
 
 # Global UFC averages — fallback prior when weight-class data is sparse
 _GLOBAL_PRIORS: dict = {
@@ -558,8 +561,8 @@ class FeatureBuilder:
             recent_td_accuracy_delta=(
                 stats_a.recent_td_accuracy - stats_b.recent_td_accuracy
             ),
-            # Elo
-            elo_delta=fa.elo_rating - fb.elo_rating,
+            # Elo — capped to prevent a single feature dominating extreme matchups
+            elo_delta=max(-200.0, min(200.0, fa.elo_rating - fb.elo_rating)),
             # Style archetypes
             striker_score_a=stats_a.striker_score,
             wrestler_score_a=stats_a.wrestler_score,

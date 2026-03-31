@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
         from ml.predict import Predictor  # deferred to avoid importing ML deps at collection time
         app.state.predictor = Predictor()
         logger.info("Predictor loaded successfully")
-    except (FileNotFoundError, ImportError) as exc:
+    except Exception as exc:
         app.state.predictor = None
         logger.warning("Models not found — prediction endpoints will return 503. (%s)", exc)
 

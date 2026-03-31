@@ -70,9 +70,12 @@ METHOD_NAMES: dict[int, str] = {
 # Computed independently from FeatureVector — avoids importing from train.py
 FEATURE_COLS: list[str] = [f.name for f in dataclasses.fields(FeatureVector)]
 
-_KO_METHODS = frozenset({"KO", "KO/TKO", "TKO"})
+_KO_METHODS = frozenset({"KO", "KO/TKO", "TKO", "TKO - DOCTOR'S STOPPAGE"})
 _SUB_METHODS = frozenset({"SUB", "SUBMISSION"})
-_DEC_METHODS = frozenset({"DEC", "U-DEC", "S-DEC", "M-DEC", "UD", "SD", "MD"})
+_DEC_METHODS = frozenset({
+    "DEC", "U-DEC", "S-DEC", "M-DEC", "UD", "SD", "MD",
+    "DECISION - UNANIMOUS", "DECISION - SPLIT", "DECISION - MAJORITY",
+})
 
 
 def _method_label(method_str: str | None) -> int | None:
