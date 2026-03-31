@@ -279,6 +279,14 @@ def calibrate_method_model(
     CalibratedClassifierCV
         Fitted calibrated wrapper.
     """
+    # Only calibrate when all 3 classes are present in the calibration set.
+    # If a class is missing the CalibratedClassifierCV output shape will be
+    # wrong (< 3 columns), causing downstream errors.
+    if len(np.unique(y_cal)) < 3:
+        logger.warning(
+            "Calibration set missing one or more method classes — skipping calibration."
+        )
+        return model
     calibrated = CalibratedClassifierCV(estimator=model, method=method, cv="prefit")
     calibrated.fit(X_cal, y_cal)
     return calibrated

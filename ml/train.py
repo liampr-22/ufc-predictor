@@ -15,6 +15,7 @@ import dataclasses
 import json
 import logging
 import os
+import random
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -87,8 +88,19 @@ def build_training_dataset(
             skipped_errors += 1
             continue
 
+        # Randomly swap A/B slots so ~50% of labels are 0 and ~50% are 1.
+        # UFCStats now always lists the winner first, so without this all
+        # labels would be 1 and the model cannot learn.
+        # Seed is deterministic per fight so training is reproducible.
+        if random.Random(fight.id).random() < 0.5:
+            fa_id, fb_id = fight.fighter_b_id, fight.fighter_a_id
+            label = 0 if fight.winner_id == fight.fighter_a_id else 1
+        else:
+            fa_id, fb_id = fight.fighter_a_id, fight.fighter_b_id
+            label = 1 if fight.winner_id == fight.fighter_a_id else 0
+
         try:
-            fv = builder.build(fight.fighter_a_id, fight.fighter_b_id, as_of_date=fight.date)
+            fv = builder.build(fa_id, fb_id, as_of_date=fight.date)
         except ValueError as exc:
             logger.warning("Skipping fight %d: %s", fight.id, exc)
             skipped_errors += 1
@@ -101,7 +113,7 @@ def build_training_dataset(
                 feat_dict[key] = int(val)
 
         rows.append(feat_dict)
-        labels.append(1 if fight.winner_id == fight.fighter_a_id else 0)
+        labels.append(label)
         dates.append(fight.date)
 
     logger.info(
@@ -206,7 +218,13 @@ def elo_baseline(
         rb = train_ratings.get(fight["fighter_b_id"], 1500.0)
         prob_a = expected_score(ra, rb)
 
-        label = 1 if fight["winner_id"] == fight["fighter_a_id"] else 0
+        # Randomly swap A/B so Elo baseline uses same orientation as the model.
+        if random.Random(fight["id"]).random() < 0.5:
+            prob_a = expected_score(rb, ra)   # swap: now predicting B's chance
+            label = 0 if fight["winner_id"] == fight["fighter_a_id"] else 1
+        else:
+            prob_a = expected_score(ra, rb)
+            label = 1 if fight["winner_id"] == fight["fighter_a_id"] else 0
         y_true.append(label)
         y_proba.append(prob_a)
 
@@ -222,7 +240,7 @@ def elo_baseline(
 
     return {
         "accuracy": float(accuracy_score(y_true, y_pred)),
-        "log_loss": float(sk_log_loss(y_true, y_proba)),
+        "log_loss": float(sk_log_loss(y_true, y_proba, labels=[0, 1])),
         "brier_score_loss": float(brier_score_loss(y_true, y_proba)),
         "correct": correct,
         "total": total,
