@@ -121,8 +121,10 @@ class Predictor:
 
         row = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
         proba = self._model.predict_proba(row)[0, 1]
-        # Shrink toward 50/50 to avoid overconfident moneylines.
-        proba = 0.70 * float(proba) + 0.30 * 0.5
+        # Mild shrinkage toward 50/50.  The leakage-free model already outputs
+        # calibrated probabilities, so we only apply a small nudge to avoid
+        # runaway confidence on degenerate inputs.
+        proba = 0.85 * float(proba) + 0.15 * 0.5
         return proba
 
     def predict(
@@ -170,8 +172,8 @@ class Predictor:
         row = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
 
         win_prob = self._model.predict_proba(row)[0, 1]
-        # Shrink toward 50/50 to avoid overconfident moneylines.
-        win_prob = 0.70 * float(win_prob) + 0.30 * 0.5
+        # Mild shrinkage toward 50/50 (matches predict_proba above).
+        win_prob = 0.85 * float(win_prob) + 0.15 * 0.5
         method_proba = self._method_model.predict_proba(row)[0]  # shape [3]
 
         return {

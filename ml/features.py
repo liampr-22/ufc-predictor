@@ -46,6 +46,25 @@ _GLOBAL_PRIORS: dict = {
     "kd_per_fight": 0.3,
 }
 
+# Weight class ordering for cross-division distance feature.
+# Women's divisions are ranked below their same-limit men's division.
+# The numbers reflect typical walk-around weight, not limit.
+_WEIGHT_CLASS_ORDER: dict[str, int] = {
+    "Women's Strawweight": 0,
+    "Women's Flyweight": 1,
+    "Women's Bantamweight": 2,
+    "Women's Featherweight": 3,
+    "Strawweight": 4,
+    "Flyweight": 5,
+    "Bantamweight": 6,
+    "Featherweight": 7,
+    "Lightweight": 8,
+    "Welterweight": 9,
+    "Middleweight": 10,
+    "Light Heavyweight": 11,
+    "Heavyweight": 12,
+}
+
 
 # ---------------------------------------------------------------------------
 # Internal data structures
@@ -104,6 +123,9 @@ class _FighterAggStats:
     recent_sig_strike_accuracy: float
     recent_td_accuracy: float
 
+    # Career win rate (wins / total fights)
+    win_rate: float
+
     # Style archetype scores in [0, 1]
     striker_score: float
     wrestler_score: float
@@ -158,6 +180,16 @@ class FeatureVector:
     recent_sig_strike_accuracy_delta: float
     recent_td_accuracy_delta: float
 
+    # Career win rate differential
+    win_rate_delta: float              # career wins/fights A − B
+
+    # Total fights (proxy for experience)
+    career_fights_a: int
+    career_fights_b: int
+
+    # Weight class distance — 0 = same division, higher = bigger jump
+    weight_class_delta: int
+
     # Elo
     elo_delta: float
 
@@ -205,6 +237,8 @@ class FeatureBuilder:
         fighter_a_id: int,
         fighter_b_id: int,
         as_of_date: date,
+        elo_a: Optional[float] = None,
+        elo_b: Optional[float] = None,
     ) -> FeatureVector:
         """
         Build a validated feature vector for the given fighter pair.
@@ -218,6 +252,10 @@ class FeatureBuilder:
         as_of_date:
             Cut-off date. Only fights with date **strictly before** this value
             are used — the fight being predicted is excluded automatically.
+        elo_a, elo_b:
+            Optional pre-fight Elo overrides. When provided (training mode),
+            these replace the DB elo_rating values so training is leakage-free.
+            If None (inference mode), the current DB values are used.
 
         Raises
         ------
@@ -240,7 +278,12 @@ class FeatureBuilder:
         stats_a = self._aggregate(fighter_a_id, records_a, as_of_date, prior_a)
         stats_b = self._aggregate(fighter_b_id, records_b, as_of_date, prior_b)
 
-        return self._build_vector(fa, fb, stats_a, stats_b)
+        # Use provided Elo overrides when available (leakage-free training),
+        # else fall back to DB values (live inference).
+        elo_rating_a = elo_a if elo_a is not None else fa.elo_rating
+        elo_rating_b = elo_b if elo_b is not None else fb.elo_rating
+
+        return self._build_vector(fa, fb, stats_a, stats_b, elo_rating_a, elo_rating_b)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -398,6 +441,7 @@ class FeatureBuilder:
                 win_streak=0,
                 recent_sig_strike_accuracy=prior["sig_strike_accuracy"],
                 recent_td_accuracy=prior["td_accuracy"],
+                win_rate=0.5,   # prior: unknown → 50%
                 striker_score=prior["sig_strike_accuracy"],
                 wrestler_score=prior["td_accuracy"],
                 grappler_score=min(1.0, prior["sub_att_per_fight"] / GRAPPLER_SCORE_CAP),
@@ -440,7 +484,10 @@ class FeatureBuilder:
             sub_per_fight = raw_sub_per_fight
             kd_per_fight = raw_kd_per_fight
 
-        # --- Finishing rates (no shrinkage — categorical) ---
+        # --- Finishing rates and win rate (no shrinkage — categorical) ---
+        wins = sum(1 for r in records if r.won)
+        win_rate = _safe_div(wins, n, default=0.5)
+
         ko_rate = _safe_div(
             sum(1 for r in records if r.won and r.method in _KO_METHODS), n
         )
@@ -500,6 +547,7 @@ class FeatureBuilder:
             win_streak=streak,
             recent_sig_strike_accuracy=recent_sig_acc,
             recent_td_accuracy=recent_td_acc,
+            win_rate=win_rate,
             striker_score=striker_score,
             wrestler_score=wrestler_score,
             grappler_score=grappler_score,
@@ -512,6 +560,8 @@ class FeatureBuilder:
         fb: Fighter,
         stats_a: _FighterAggStats,
         stats_b: _FighterAggStats,
+        elo_rating_a: float,
+        elo_rating_b: float,
     ) -> FeatureVector:
         """Combine per-fighter aggregated stats into the final feature vector."""
 
@@ -528,6 +578,17 @@ class FeatureBuilder:
         # Recency defaults for fighters with no fights
         days_a = stats_a.days_since_last_fight if stats_a.days_since_last_fight is not None else 9999.0
         days_b = stats_b.days_since_last_fight if stats_b.days_since_last_fight is not None else 9999.0
+
+        # Weight class distance — how many divisions apart are these fighters?
+        wc_a = _WEIGHT_CLASS_ORDER.get(fa.weight_class or "", -1)
+        wc_b = _WEIGHT_CLASS_ORDER.get(fb.weight_class or "", -1)
+        if wc_a >= 0 and wc_b >= 0:
+            weight_class_delta = abs(wc_a - wc_b)
+        else:
+            weight_class_delta = 0   # unknown weight class → assume same division
+
+        # Elo — raised cap to ±400 (current max spread is ~270 pts with K=48)
+        elo_delta = max(-400.0, min(400.0, elo_rating_a - elo_rating_b))
 
         return FeatureVector(
             # Physical
@@ -561,8 +622,14 @@ class FeatureBuilder:
             recent_td_accuracy_delta=(
                 stats_a.recent_td_accuracy - stats_b.recent_td_accuracy
             ),
-            # Elo — capped to prevent a single feature dominating extreme matchups
-            elo_delta=max(-200.0, min(200.0, fa.elo_rating - fb.elo_rating)),
+            # Career win rate and experience
+            win_rate_delta=stats_a.win_rate - stats_b.win_rate,
+            career_fights_a=stats_a.num_fights,
+            career_fights_b=stats_b.num_fights,
+            # Weight class distance (0 = same, 1 = adjacent, 2+ = super fight)
+            weight_class_delta=weight_class_delta,
+            # Elo (leakage-free when elo_rating_a/b are pre-fight snapshots)
+            elo_delta=elo_delta,
             # Style archetypes
             striker_score_a=stats_a.striker_score,
             wrestler_score_a=stats_a.wrestler_score,

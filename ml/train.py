@@ -30,7 +30,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from ml.calibration import calibrate, evaluate
-from ml.elo import expected_score, load_fights_from_db, replay_fights
+from ml.elo import build_elo_snapshots, expected_score, load_fights_from_db, persist_ratings, replay_fights
 from ml.features import FeatureBuilder, FeatureVector
 from models.schema import Fight
 
@@ -72,6 +72,11 @@ def build_training_dataset(
     stmt = select(Fight).order_by(Fight.date.asc(), Fight.id.asc())
     fights = session.scalars(stmt).all()
 
+    # Pre-compute per-fight Elo snapshots so features use pre-fight ratings,
+    # not the post-history DB values.  This eliminates Elo data leakage.
+    all_fight_dicts_for_elo = load_fights_from_db(session)
+    elo_snapshots = build_elo_snapshots(all_fight_dicts_for_elo)
+
     builder = FeatureBuilder(session)
     rows: list[dict] = []
     labels: list[int] = []
@@ -99,8 +104,13 @@ def build_training_dataset(
             fa_id, fb_id = fight.fighter_a_id, fight.fighter_b_id
             label = 1 if fight.winner_id == fight.fighter_a_id else 0
 
+        # Look up pre-fight Elo for each fighter (leakage-free)
+        snapshot = elo_snapshots.get(fight.id, {})
+        elo_a = snapshot.get(fa_id)
+        elo_b = snapshot.get(fb_id)
+
         try:
-            fv = builder.build(fa_id, fb_id, as_of_date=fight.date)
+            fv = builder.build(fa_id, fb_id, as_of_date=fight.date, elo_a=elo_a, elo_b=elo_b)
         except ValueError as exc:
             logger.warning("Skipping fight %d: %s", fight.id, exc)
             skipped_errors += 1
@@ -395,6 +405,12 @@ def _run_with_session(
             json.dump(report_dict, f, indent=2, default=str)
         logger.info("Model saved to %s", out / MODEL_FILENAME)
         logger.info("Report saved to %s", out / REPORT_FILENAME)
+
+        # Refresh Elo ratings in DB so inference uses the same K-factor as training
+        final_ratings = replay_fights(all_fight_dicts)
+        updated = persist_ratings(session, final_ratings)
+        logger.info("Elo ratings refreshed: %d fighters updated.", updated)
+        report_dict["elo_fighters_updated"] = updated
 
     # 11. Train and save method of victory model
     from ml.method_train import _run_method_pipeline  # lazy — avoids circular import

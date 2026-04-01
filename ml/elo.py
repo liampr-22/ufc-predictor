@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 INITIAL_ELO: float = 1500.0
-BASE_K: float = 32.0
+BASE_K: float = 48.0          # raised from 32 → wider Elo spread (~50% more differentiation)
 DECAY_THRESHOLD_YEARS: int = 5
 DECAY_MULTIPLIER: float = 0.5
 
@@ -181,6 +181,74 @@ def backtest(
         "test_size": len(test_fights),
         "skipped_draws": skipped_draws,
     }
+
+
+# ── Pre-fight snapshot builder ────────────────────────────────────────────────
+
+def build_elo_snapshots(
+    fights: list[dict],
+    base_k: float = BASE_K,
+    initial_rating: float = INITIAL_ELO,
+    reference_date: date | None = None,
+) -> dict[int, dict[int, float]]:
+    """
+    Replay all fights chronologically and capture each fighter's Elo rating
+    *before* each fight.
+
+    This is critical for leakage-free training: when building features for a
+    historical fight, we need the Elo ratings as they stood just before the
+    fight occurred, not the final post-history values stored in the DB.
+
+    Args:
+        fights:         List of fight dicts ordered by date ascending.
+                        Each dict must have: id, date, fighter_a_id, fighter_b_id, winner_id.
+        base_k:         Base K-factor.
+        initial_rating: Starting rating for every fighter.
+        reference_date: Date used for time-decay. Defaults to today.
+
+    Returns:
+        Dict mapping fight_id → {fighter_id: pre_fight_elo}.
+        Only the two participants are included per fight.
+    """
+    if reference_date is None:
+        reference_date = date.today()
+
+    ratings: dict[int, float] = {}
+    snapshots: dict[int, dict[int, float]] = {}
+
+    for fight in fights:
+        fa_id = fight["fighter_a_id"]
+        fb_id = fight["fighter_b_id"]
+        winner_id = fight["winner_id"]
+        fight_date = fight["date"]
+        fight_id = fight["id"]
+
+        if fa_id not in ratings:
+            ratings[fa_id] = initial_rating
+        if fb_id not in ratings:
+            ratings[fb_id] = initial_rating
+
+        # Capture pre-fight snapshot BEFORE updating ratings
+        snapshots[fight_id] = {fa_id: ratings[fa_id], fb_id: ratings[fb_id]}
+
+        # Update ratings (same logic as replay_fights)
+        ra = ratings[fa_id]
+        rb = ratings[fb_id]
+        ea = expected_score(ra, rb)
+        eb = 1.0 - ea
+
+        if winner_id == fa_id:
+            sa, sb = 1.0, 0.0
+        elif winner_id == fb_id:
+            sa, sb = 0.0, 1.0
+        else:
+            sa, sb = 0.5, 0.5
+
+        k = effective_k(fight_date, reference_date, base_k)
+        ratings[fa_id] = update_rating(ra, sa, ea, k)
+        ratings[fb_id] = update_rating(rb, sb, eb, k)
+
+    return snapshots
 
 
 # ── DB layer ──────────────────────────────────────────────────────────────────
