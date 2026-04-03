@@ -15,6 +15,7 @@ from typing import Optional
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from ml.elo import INITIAL_ELO
 from models.schema import Fight, FightStats, Fighter
 
 # ---------------------------------------------------------------------------
@@ -78,6 +79,7 @@ class _FightRecord:
     fight_date: date
     won: bool
     method: Optional[str]    # uppercase, e.g. "KO", "SUB", "DEC"
+    opponent_id: int         # DB id of the opponent in this fight
 
     # Own stats
     sig_landed: int
@@ -92,6 +94,9 @@ class _FightRecord:
     opp_sig_attempted: int
     opp_td_landed: int
     opp_td_attempted: int
+
+    # Fight duration in seconds (for per-minute strike volume)
+    duration_seconds: float
 
 
 @dataclass
@@ -203,6 +208,13 @@ class FeatureVector:
     grappler_score_b: float
     brawler_score_b: float
 
+    # Strike volume — sig strikes attempted per minute
+    sig_strikes_per_min_delta: float   # A − B
+
+    # Age cliff flags — fighters over 34 decline sharply (nonlinear effect)
+    fighter_a_over_34: int      # 1 if A is over 34 at fight date, else 0
+    fighter_b_over_34: int      # 1 if B is over 34 at fight date, else 0
+
     # Confidence flags
     low_confidence_a: bool
     low_confidence_b: bool
@@ -239,6 +251,7 @@ class FeatureBuilder:
         as_of_date: date,
         elo_a: Optional[float] = None,
         elo_b: Optional[float] = None,
+        elo_snapshots: Optional[dict] = None,
     ) -> FeatureVector:
         """
         Build a validated feature vector for the given fighter pair.
@@ -283,7 +296,7 @@ class FeatureBuilder:
         elo_rating_a = elo_a if elo_a is not None else fa.elo_rating
         elo_rating_b = elo_b if elo_b is not None else fb.elo_rating
 
-        return self._build_vector(fa, fb, stats_a, stats_b, elo_rating_a, elo_rating_b)
+        return self._build_vector(fa, fb, stats_a, stats_b, elo_rating_a, elo_rating_b, as_of_date, records_a, records_b, elo_snapshots or {})
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -321,12 +334,27 @@ class FeatureBuilder:
             won = fight.winner_id == fighter_id
             method = fight.method.upper().strip() if fight.method else None
 
+            # Fight duration in seconds for per-minute strike volume.
+            # fight.round is the finishing round; fight.time is the clock time
+            # in that round (e.g. "4:32"). Completed rounds before the final
+            # round are 5 minutes each.
+            duration_seconds = 0.0
+            try:
+                if fight.round and fight.time:
+                    mins, secs = (int(x) for x in fight.time.split(":"))
+                    duration_seconds = float((fight.round - 1) * 300 + mins * 60 + secs)
+                elif fight.round:
+                    duration_seconds = float(fight.round * 300)
+            except (ValueError, AttributeError):
+                duration_seconds = 0.0
+
             records.append(
                 _FightRecord(
                     fight_id=fight.id,
                     fight_date=fight.date,
                     won=won,
                     method=method,
+                    opponent_id=opp_id,
                     sig_landed=my.significant_strikes_landed or 0,
                     sig_attempted=my.significant_strikes_attempted or 0,
                     td_landed=my.takedowns_landed or 0,
@@ -337,6 +365,7 @@ class FeatureBuilder:
                     opp_sig_attempted=opp.significant_strikes_attempted or 0,
                     opp_td_landed=opp.takedowns_landed or 0,
                     opp_td_attempted=opp.takedowns_attempted or 0,
+                    duration_seconds=duration_seconds,
                 )
             )
 
@@ -562,6 +591,10 @@ class FeatureBuilder:
         stats_b: _FighterAggStats,
         elo_rating_a: float,
         elo_rating_b: float,
+        as_of_date: date,
+        records_a: list,
+        records_b: list,
+        elo_snapshots: dict,
     ) -> FeatureVector:
         """Combine per-fighter aggregated stats into the final feature vector."""
 
@@ -586,6 +619,29 @@ class FeatureBuilder:
             weight_class_delta = abs(wc_a - wc_b)
         else:
             weight_class_delta = 0   # unknown weight class → assume same division
+
+        # Strike volume — sig strikes attempted per minute
+        def _sig_per_min(records: list) -> float:
+            total_att = sum(r.sig_attempted for r in records)
+            total_secs = sum(r.duration_seconds for r in records)
+            if total_secs < 1.0:
+                return 0.0
+            return total_att / (total_secs / 60.0)
+
+        sig_per_min_a = _sig_per_min(records_a)
+        sig_per_min_b = _sig_per_min(records_b)
+        sig_strikes_per_min_delta = sig_per_min_a - sig_per_min_b
+
+        # Age cliff — fighters over 34 decline sharply (nonlinear)
+        def _age_at(dob, ref_date) -> float | None:
+            if dob is None:
+                return None
+            return (ref_date - dob).days / 365.25
+
+        age_a_years = _age_at(fa.dob, as_of_date)
+        age_b_years = _age_at(fb.dob, as_of_date)
+        fighter_a_over_34 = 1 if (age_a_years is not None and age_a_years > 34) else 0
+        fighter_b_over_34 = 1 if (age_b_years is not None and age_b_years > 34) else 0
 
         # Elo — raised cap to ±400 (current max spread is ~270 pts with K=48)
         elo_delta = max(-400.0, min(400.0, elo_rating_a - elo_rating_b))
@@ -639,6 +695,11 @@ class FeatureBuilder:
             wrestler_score_b=stats_b.wrestler_score,
             grappler_score_b=stats_b.grappler_score,
             brawler_score_b=stats_b.brawler_score,
+            # Strike volume
+            sig_strikes_per_min_delta=sig_strikes_per_min_delta,
+            # Age cliff
+            fighter_a_over_34=fighter_a_over_34,
+            fighter_b_over_34=fighter_b_over_34,
             # Confidence
             low_confidence_a=stats_a.low_confidence,
             low_confidence_b=stats_b.low_confidence,

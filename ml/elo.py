@@ -24,6 +24,7 @@ DECAY_THRESHOLD_YEARS: int = 5
 DECAY_MULTIPLIER: float = 0.5
 
 
+
 # ── Pure math ─────────────────────────────────────────────────────────────────
 
 def expected_score(rating_a: float, rating_b: float) -> float:
@@ -268,6 +269,7 @@ def load_fights_from_db(session: Session) -> list[dict]:
             "fighter_a_id": f.fighter_a_id,
             "fighter_b_id": f.fighter_b_id,
             "winner_id": f.winner_id,
+            "method": f.method,
         }
         for f in fights
     ]

@@ -71,8 +71,8 @@ class Predictor:
         fighter_a_id: int,
         fighter_b_id: int,
         as_of_date: date,
-    ) -> np.ndarray:
-        """Build a single-row feature matrix as a numpy array."""
+    ) -> tuple[np.ndarray, dict]:
+        """Build a single-row feature matrix and return (row, feature_dict)."""
         builder = FeatureBuilder(session)
         fv = builder.build(fighter_a_id, fighter_b_id, as_of_date)
 
@@ -81,7 +81,7 @@ class Predictor:
             if isinstance(val, bool):
                 feat_dict[key] = int(val)
 
-        return pd.DataFrame([feat_dict])[FEATURE_COLS].values
+        return pd.DataFrame([feat_dict])[FEATURE_COLS].values, feat_dict
 
     # ------------------------------------------------------------------
     # Public interface
@@ -119,7 +119,7 @@ class Predictor:
         if as_of_date is None:
             as_of_date = date.today()
 
-        row = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
+        row, _ = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
         proba = self._model.predict_proba(row)[0, 1]
         # Mild shrinkage toward 50/50.  The leakage-free model already outputs
         # calibrated probabilities, so we only apply a small nudge to avoid
@@ -169,7 +169,7 @@ class Predictor:
         if as_of_date is None:
             as_of_date = date.today()
 
-        row = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
+        row, feat_dict = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
 
         win_prob = self._model.predict_proba(row)[0, 1]
         # Mild shrinkage toward 50/50 (matches predict_proba above).
@@ -182,5 +182,15 @@ class Predictor:
                 "ko_tko":     float(method_proba[METHOD_LABEL_KO]),
                 "submission": float(method_proba[METHOD_LABEL_SUB]),
                 "decision":   float(method_proba[METHOD_LABEL_DEC]),
+            },
+            "fighter_a_finish_rates": {
+                "ko_tko":     float(feat_dict.get("ko_rate_a", 0.0)),
+                "submission": float(feat_dict.get("sub_rate_a", 0.0)),
+                "decision":   float(feat_dict.get("dec_rate_a", 0.0)),
+            },
+            "fighter_b_finish_rates": {
+                "ko_tko":     float(feat_dict.get("ko_rate_b", 0.0)),
+                "submission": float(feat_dict.get("sub_rate_b", 0.0)),
+                "decision":   float(feat_dict.get("dec_rate_b", 0.0)),
             },
         }

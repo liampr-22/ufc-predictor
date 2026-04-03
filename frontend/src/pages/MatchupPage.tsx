@@ -11,14 +11,16 @@ export default function MatchupPage() {
   const [fighterB, setFighterB] = useState('')
   const [sidebarFighter, setSidebarFighter] = useState<string | null>(null)
 
+  const [prediction, setPrediction] = useState<PredictionResponse | null>(null)
+
   const {
     mutate,
-    data: prediction,
     isPending,
     error,
     reset,
   } = useMutation<PredictionResponse, Error, { a: string; b: string }>({
     mutationFn: ({ a, b }) => predict(a, b),
+    onSuccess: (data) => setPrediction(data),
   })
 
   function handlePredict() {
@@ -32,7 +34,17 @@ export default function MatchupPage() {
     setFighterA(fighterB)
     setFighterB(tmp)
     if (prediction) {
-      mutate({ a: fighterB, b: fighterA })
+      setPrediction({
+        ...prediction,
+        fighter_a: prediction.fighter_b,
+        fighter_b: prediction.fighter_a,
+        key_differentials: {
+          elo_delta: -prediction.key_differentials.elo_delta,
+          reach_delta: prediction.key_differentials.reach_delta != null ? -prediction.key_differentials.reach_delta : null,
+          height_delta: prediction.key_differentials.height_delta != null ? -prediction.key_differentials.height_delta : null,
+          age_delta: prediction.key_differentials.age_delta != null ? -prediction.key_differentials.age_delta : null,
+        },
+      })
     }
   }
 
@@ -91,7 +103,7 @@ export default function MatchupPage() {
           {(prediction || error) && (
             <button
               type="button"
-              onClick={() => { reset(); setFighterA(''); setFighterB('') }}
+              onClick={() => { reset(); setPrediction(null); setFighterA(''); setFighterB('') }}
               className="text-sm text-ufc-muted hover:text-white transition-colors"
             >
               Clear

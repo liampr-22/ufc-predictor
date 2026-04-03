@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from api.database import get_db
 from ml.calibration import prob_to_american_odds, prob_to_decimal_odds
 from models.pydantic_models import (
+    FinishRates,
     FighterOdds,
     FighterPrediction,
     KeyDifferentials,
@@ -45,6 +46,8 @@ def _build_prediction_response(
     win_prob_b = max(0.001, min(0.999, win_prob_b))
 
     method_probs = raw["method_probs"]
+    fa_finish = raw["fighter_a_finish_rates"]
+    fb_finish = raw["fighter_b_finish_rates"]
 
     # Key differentials from DB values
     reach_delta = (
@@ -87,6 +90,16 @@ def _build_prediction_response(
             reach_delta=round(reach_delta, 2) if reach_delta is not None else None,
             height_delta=round(height_delta, 2) if height_delta is not None else None,
             age_delta=age_delta,
+        ),
+        fighter_a_finish_rates=FinishRates(
+            ko_tko=round(fa_finish["ko_tko"], 4),
+            submission=round(fa_finish["submission"], 4),
+            decision=round(fa_finish["decision"], 4),
+        ),
+        fighter_b_finish_rates=FinishRates(
+            ko_tko=round(fb_finish["ko_tko"], 4),
+            submission=round(fb_finish["submission"], 4),
+            decision=round(fb_finish["decision"], 4),
         ),
     )
 

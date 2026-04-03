@@ -110,7 +110,7 @@ def build_training_dataset(
         elo_b = snapshot.get(fb_id)
 
         try:
-            fv = builder.build(fa_id, fb_id, as_of_date=fight.date, elo_a=elo_a, elo_b=elo_b)
+            fv = builder.build(fa_id, fb_id, as_of_date=fight.date, elo_a=elo_a, elo_b=elo_b, elo_snapshots=elo_snapshots)
         except ValueError as exc:
             logger.warning("Skipping fight %d: %s", fight.id, exc)
             skipped_errors += 1
@@ -292,7 +292,7 @@ def train_model(
         objective="binary",
         metric="binary_logloss",
         random_state=42,
-        n_jobs=-1,
+        n_jobs=1,
         verbose=-1,
     )
 

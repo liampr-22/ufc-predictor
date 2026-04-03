@@ -72,6 +72,12 @@ export interface MethodProbs {
   decision: number
 }
 
+export interface FinishRates {
+  ko_tko: number
+  submission: number
+  decision: number
+}
+
 export interface FighterOdds {
   american: number
   decimal: number
@@ -95,6 +101,8 @@ export interface PredictionResponse {
   fighter_b: FighterPrediction
   method_probs: MethodProbs
   key_differentials: KeyDifferentials
+  fighter_a_finish_rates: FinishRates
+  fighter_b_finish_rates: FinishRates
 }
 
 export interface ScheduledFight {

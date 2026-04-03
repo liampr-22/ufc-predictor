@@ -93,6 +93,12 @@ class MethodProbs(BaseModel):
     decision: float
 
 
+class FinishRates(BaseModel):
+    ko_tko: float
+    submission: float
+    decision: float
+
+
 class FighterOdds(BaseModel):
     american: float
     decimal: float
@@ -116,6 +122,8 @@ class PredictionResponse(BaseModel):
     fighter_b: FighterPrediction
     method_probs: MethodProbs
     key_differentials: KeyDifferentials
+    fighter_a_finish_rates: FinishRates
+    fighter_b_finish_rates: FinishRates
 
 
 class ScheduledFight(BaseModel):
