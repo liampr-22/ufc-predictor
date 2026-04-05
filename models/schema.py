@@ -78,6 +78,7 @@ class Fight(Base):
     method: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # KO/TKO, SUB, DEC, NC
     round: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     time: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)     # "4:32" format
+    scheduled_rounds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 3 or 5
     ufcstats_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True)
 
     # Relationships

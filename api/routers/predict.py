@@ -123,7 +123,7 @@ def predict(body: PredictionRequest, request: Request, db: Session = Depends(get
     fb = _resolve_fighter(body.fighter_b, db)
 
     try:
-        raw = predictor.predict(db, fa.id, fb.id)
+        raw = predictor.predict(db, fa.id, fb.id, scheduled_rounds=body.scheduled_rounds)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

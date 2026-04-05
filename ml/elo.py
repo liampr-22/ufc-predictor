@@ -51,17 +51,23 @@ def effective_k(
     base_k: float = BASE_K,
     decay_threshold_years: int = DECAY_THRESHOLD_YEARS,
     decay_multiplier: float = DECAY_MULTIPLIER,
+    opponent_elo: float | None = None,
 ) -> float:
     """
-    Return the effective K-factor, applying time-decay for fights 5+ years old.
+    Return the effective K-factor for one fighter in one fight.
 
-    Fights where (reference_date - fight_date) >= decay_threshold_years receive
-    base_k * decay_multiplier. More recent fights use base_k unchanged.
+    Two adjustments are applied:
+    - Time decay: fights 5+ years old use base_k * decay_multiplier.
+    - Opponent quality: K scales with opponent Elo relative to INITIAL_ELO.
+      Beating/losing to a 1200-Elo opponent = 0.8× K (less movement).
+      Beating/losing to a 1800-Elo opponent = 1.2× K (more movement), capped at 1.5×.
+      This prevents fighters from farming Elo against weak opposition.
     """
     years_old = (reference_date - fight_date).days / 365.25
-    if years_old >= decay_threshold_years:
-        return base_k * decay_multiplier
-    return base_k
+    k = base_k * (decay_multiplier if years_old >= decay_threshold_years else 1.0)
+    if opponent_elo is not None:
+        k *= min(1.5, opponent_elo / INITIAL_ELO)
+    return k
 
 
 # ── In-memory replay ──────────────────────────────────────────────────────────
@@ -120,10 +126,12 @@ def replay_fights(
         else:
             sa, sb = 0.5, 0.5  # draw / no contest
 
-        k = effective_k(fight_date, reference_date, base_k)
+        # Per-fighter K: each fighter's movement scales with their opponent's rating.
+        ka = effective_k(fight_date, reference_date, base_k, opponent_elo=rb)
+        kb = effective_k(fight_date, reference_date, base_k, opponent_elo=ra)
 
-        ratings[fa_id] = update_rating(ra, sa, ea, k)
-        ratings[fb_id] = update_rating(rb, sb, eb, k)
+        ratings[fa_id] = update_rating(ra, sa, ea, ka)
+        ratings[fb_id] = update_rating(rb, sb, eb, kb)
 
     return ratings
 
@@ -245,9 +253,10 @@ def build_elo_snapshots(
         else:
             sa, sb = 0.5, 0.5
 
-        k = effective_k(fight_date, reference_date, base_k)
-        ratings[fa_id] = update_rating(ra, sa, ea, k)
-        ratings[fb_id] = update_rating(rb, sb, eb, k)
+        ka = effective_k(fight_date, reference_date, base_k, opponent_elo=rb)
+        kb = effective_k(fight_date, reference_date, base_k, opponent_elo=ra)
+        ratings[fa_id] = update_rating(ra, sa, ea, ka)
+        ratings[fb_id] = update_rating(rb, sb, eb, kb)
 
     return snapshots
 

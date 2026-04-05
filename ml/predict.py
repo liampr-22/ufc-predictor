@@ -71,10 +71,11 @@ class Predictor:
         fighter_a_id: int,
         fighter_b_id: int,
         as_of_date: date,
+        scheduled_rounds: Optional[int] = None,
     ) -> tuple[np.ndarray, dict]:
         """Build a single-row feature matrix and return (row, feature_dict)."""
         builder = FeatureBuilder(session)
-        fv = builder.build(fighter_a_id, fighter_b_id, as_of_date)
+        fv = builder.build(fighter_a_id, fighter_b_id, as_of_date, scheduled_rounds=scheduled_rounds)
 
         feat_dict = fv.to_dict()
         for key, val in feat_dict.items():
@@ -93,6 +94,7 @@ class Predictor:
         fighter_a_id: int,
         fighter_b_id: int,
         as_of_date: Optional[date] = None,
+        scheduled_rounds: Optional[int] = None,
     ) -> float:
         """
         Return P(fighter_a wins) in [0.0, 1.0].
@@ -119,12 +121,8 @@ class Predictor:
         if as_of_date is None:
             as_of_date = date.today()
 
-        row, _ = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
-        proba = self._model.predict_proba(row)[0, 1]
-        # Mild shrinkage toward 50/50.  The leakage-free model already outputs
-        # calibrated probabilities, so we only apply a small nudge to avoid
-        # runaway confidence on degenerate inputs.
-        proba = 0.85 * float(proba) + 0.15 * 0.5
+        row, _ = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date, scheduled_rounds=scheduled_rounds)
+        proba = float(self._model.predict_proba(row)[0, 1])
         return proba
 
     def predict(
@@ -133,6 +131,7 @@ class Predictor:
         fighter_a_id: int,
         fighter_b_id: int,
         as_of_date: Optional[date] = None,
+        scheduled_rounds: Optional[int] = None,
     ) -> dict:
         """
         Return combined outcome and method-of-victory probabilities.
@@ -169,11 +168,9 @@ class Predictor:
         if as_of_date is None:
             as_of_date = date.today()
 
-        row, feat_dict = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date)
+        row, feat_dict = self._build_row(session, fighter_a_id, fighter_b_id, as_of_date, scheduled_rounds=scheduled_rounds)
 
-        win_prob = self._model.predict_proba(row)[0, 1]
-        # Mild shrinkage toward 50/50 (matches predict_proba above).
-        win_prob = 0.85 * float(win_prob) + 0.15 * 0.5
+        win_prob = float(self._model.predict_proba(row)[0, 1])
         method_proba = self._method_model.predict_proba(row)[0]  # shape [3]
 
         return {

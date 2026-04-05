@@ -45,6 +45,7 @@ from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from ml.elo import build_elo_snapshots, load_fights_from_db
 from ml.features import FeatureBuilder, FeatureVector
 from models.schema import Fight
 
@@ -117,6 +118,11 @@ def build_method_dataset(
     stmt = select(Fight).order_by(Fight.date.asc(), Fight.id.asc())
     fights = session.scalars(stmt).all()
 
+    # Build pre-fight Elo snapshots so the method model uses leakage-free Elo,
+    # matching the approach in train.py's build_training_dataset().
+    all_fight_dicts = load_fights_from_db(session)
+    elo_snapshots = build_elo_snapshots(all_fight_dicts)
+
     builder = FeatureBuilder(session)
     rows: list[dict] = []
     labels: list[int] = []
@@ -131,8 +137,18 @@ def build_method_dataset(
             skipped_no_method += 1
             continue
 
+        snapshot = elo_snapshots.get(fight.id, {})
+        elo_a = snapshot.get(fight.fighter_a_id)
+        elo_b = snapshot.get(fight.fighter_b_id)
+
         try:
-            fv = builder.build(fight.fighter_a_id, fight.fighter_b_id, as_of_date=fight.date)
+            fv = builder.build(
+                fight.fighter_a_id, fight.fighter_b_id,
+                as_of_date=fight.date,
+                elo_a=elo_a, elo_b=elo_b,
+                elo_snapshots=elo_snapshots,
+                scheduled_rounds=fight.scheduled_rounds,
+            )
         except ValueError as exc:
             logger.warning("Skipping fight %d: %s", fight.id, exc)
             skipped_errors += 1
@@ -229,11 +245,9 @@ def train_method_model(
         "n_estimators": [100, 200],
         "max_depth": [3, 5],
         "learning_rate": [0.05, 0.1],
-        "subsample": [0.8, 1.0],
-        "colsample_bytree": [0.8, 1.0],
     }
 
-    cv = TimeSeriesSplit(n_splits=n_cv_splits)
+    cv = TimeSeriesSplit(n_splits=3)
     search = GridSearchCV(
         estimator=base,
         param_grid=param_grid,
@@ -395,10 +409,12 @@ def _run_method_pipeline(
 
     model = train_method_model(X_train, y_train, n_cv_splits=n_cv_splits)
 
-    cal_idx = int(len(X_train) * 0.80)
+    # 30% calibration carve-out (was 20%) gives more data for the 3-class calibration.
+    # sigmoid (Platt) instead of isotonic — fewer parameters, less overfit on small cal sets.
+    cal_idx = int(len(X_train) * 0.70)
     X_cal = X_train.iloc[cal_idx:].values
     y_cal = y_train.iloc[cal_idx:].values
-    cal_model = calibrate_method_model(model, X_cal, y_cal, method="isotonic")
+    cal_model = calibrate_method_model(model, X_cal, y_cal, method="sigmoid")
 
     metrics = evaluate_method_model(cal_model, X_test.values, y_test.values)
 

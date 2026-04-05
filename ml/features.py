@@ -45,7 +45,16 @@ _GLOBAL_PRIORS: dict = {
     "strike_defense": 0.55,
     "sub_att_per_fight": 0.5,
     "kd_per_fight": 0.3,
+    # Finish rate priors: (KO/sub/dec finishes) / (2 * total fights) — one winner per finish,
+    # two fighters per fight, so each fighter's expected rate is half the fight-level rate.
+    "ko_rate": 0.19,   # ~38% of UFC fights end KO/TKO → ~19% per fighter
+    "sub_rate": 0.13,  # ~26% end submission → ~13% per fighter
+    "dec_rate": 0.33,  # ~66% end decision → ~33% per fighter
 }
+
+# Virtual prior fights for Elo uncertainty shrinkage.
+# A 3-fight fighter gets (10/13) ≈ 77% weight on INITIAL_ELO; a 20-fight veteran gets (10/30) ≈ 33%.
+ELO_PRIOR_FIGHTS: int = 10
 
 # Weight class ordering for cross-division distance feature.
 # Women's divisions are ranked below their same-limit men's division.
@@ -219,6 +228,15 @@ class FeatureVector:
     low_confidence_a: bool
     low_confidence_b: bool
 
+    # Fight format — 1 if scheduled for 5 rounds (main events, title fights), 0 if 3 rounds or unknown.
+    # Strongly affects method distribution: 5-round fights have ~2x the decision rate of 3-round fights.
+    is_five_round_fight: int
+
+    # Opponent quality differential — average pre-fight Elo of opponents faced by A minus B.
+    # Captures competition level: a fighter beating top-10 opponents should be rated higher
+    # than one with the same Elo accumulated against weak opposition.
+    opponent_quality_delta: float
+
     def to_dict(self) -> dict:
         """Return a flat dict suitable for use as an ML feature matrix row."""
         return asdict(self)
@@ -252,6 +270,7 @@ class FeatureBuilder:
         elo_a: Optional[float] = None,
         elo_b: Optional[float] = None,
         elo_snapshots: Optional[dict] = None,
+        scheduled_rounds: Optional[int] = None,
     ) -> FeatureVector:
         """
         Build a validated feature vector for the given fighter pair.
@@ -296,7 +315,7 @@ class FeatureBuilder:
         elo_rating_a = elo_a if elo_a is not None else fa.elo_rating
         elo_rating_b = elo_b if elo_b is not None else fb.elo_rating
 
-        return self._build_vector(fa, fb, stats_a, stats_b, elo_rating_a, elo_rating_b, as_of_date, records_a, records_b, elo_snapshots or {})
+        return self._build_vector(fa, fb, stats_a, stats_b, elo_rating_a, elo_rating_b, as_of_date, records_a, records_b, elo_snapshots or {}, scheduled_rounds=scheduled_rounds)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -429,6 +448,20 @@ class FeatureBuilder:
         sub_t = sum(r.submission_attempts or 0 for r in rows)
         n = len(rows)
 
+        # Finish rate priors — query Fight methods for this weight class's fights.
+        # ko_rate prior = KO finishes / (2 * n_fights): one winner per finish, two fighters per fight.
+        fight_ids = list({r.fight_id for r in rows})
+        finish_methods = (
+            self._s.query(Fight.method)
+            .filter(Fight.id.in_(fight_ids))
+            .all()
+        ) if fight_ids else []
+        n_wc_fights = len(fight_ids)
+        n_appearances = 2 * n_wc_fights if n_wc_fights else 1
+        ko_rate_prior = sum(1 for (m,) in finish_methods if m and m.upper().strip() in _KO_METHODS) / n_appearances
+        sub_rate_prior = sum(1 for (m,) in finish_methods if m and m.upper().strip() in _SUB_METHODS) / n_appearances
+        dec_rate_prior = sum(1 for (m,) in finish_methods if m and m.upper().strip() in _DEC_METHODS) / n_appearances
+
         return {
             "sig_strike_accuracy": _safe_div(sig_l, sig_a, _GLOBAL_PRIORS["sig_strike_accuracy"]),
             "td_accuracy": _safe_div(td_l, td_a, _GLOBAL_PRIORS["td_accuracy"]),
@@ -436,6 +469,9 @@ class FeatureBuilder:
             "strike_defense": _GLOBAL_PRIORS["strike_defense"],
             "sub_att_per_fight": _safe_div(sub_t, n, _GLOBAL_PRIORS["sub_att_per_fight"]),
             "kd_per_fight": _GLOBAL_PRIORS["kd_per_fight"],
+            "ko_rate": ko_rate_prior or _GLOBAL_PRIORS["ko_rate"],
+            "sub_rate": sub_rate_prior or _GLOBAL_PRIORS["sub_rate"],
+            "dec_rate": dec_rate_prior or _GLOBAL_PRIORS["dec_rate"],
         }
 
     def _aggregate(
@@ -463,9 +499,9 @@ class FeatureBuilder:
                 td_defense=prior["td_defense"],
                 sub_att_per_fight=prior["sub_att_per_fight"],
                 kd_per_fight=prior["kd_per_fight"],
-                ko_rate=0.0,
-                sub_rate=0.0,
-                dec_rate=0.0,
+                ko_rate=prior["ko_rate"],
+                sub_rate=prior["sub_rate"],
+                dec_rate=prior["dec_rate"],
                 days_since_last_fight=None,
                 win_streak=0,
                 recent_sig_strike_accuracy=prior["sig_strike_accuracy"],
@@ -513,19 +549,19 @@ class FeatureBuilder:
             sub_per_fight = raw_sub_per_fight
             kd_per_fight = raw_kd_per_fight
 
-        # --- Finishing rates and win rate (no shrinkage — categorical) ---
+        # --- Finishing rates and win rate ---
         wins = sum(1 for r in records if r.won)
         win_rate = _safe_div(wins, n, default=0.5)
 
-        ko_rate = _safe_div(
-            sum(1 for r in records if r.won and r.method in _KO_METHODS), n
-        )
-        sub_rate = _safe_div(
-            sum(1 for r in records if r.won and r.method in _SUB_METHODS), n
-        )
-        dec_rate = _safe_div(
-            sum(1 for r in records if r.won and r.method in _DEC_METHODS), n
-        )
+        # Apply Bayesian shrinkage toward weight-class prior — always, not just for
+        # low_confidence fighters. For a 7-fight fighter with 0 KO wins, raw ko_rate=0.0
+        # is misleading; shrinkage pulls it toward the weight-class base rate.
+        raw_ko_rate = _safe_div(sum(1 for r in records if r.won and r.method in _KO_METHODS), n)
+        raw_sub_rate = _safe_div(sum(1 for r in records if r.won and r.method in _SUB_METHODS), n)
+        raw_dec_rate = _safe_div(sum(1 for r in records if r.won and r.method in _DEC_METHODS), n)
+        ko_rate = (n * raw_ko_rate + k * prior["ko_rate"]) / (n + k)
+        sub_rate = (n * raw_sub_rate + k * prior["sub_rate"]) / (n + k)
+        dec_rate = (n * raw_dec_rate + k * prior["dec_rate"]) / (n + k)
 
         # --- Recency ---
         last = records[-1]   # records are oldest-first; last = most recent
@@ -595,6 +631,7 @@ class FeatureBuilder:
         records_a: list,
         records_b: list,
         elo_snapshots: dict,
+        scheduled_rounds: Optional[int] = None,
     ) -> FeatureVector:
         """Combine per-fighter aggregated stats into the final feature vector."""
 
@@ -643,8 +680,30 @@ class FeatureBuilder:
         fighter_a_over_34 = 1 if (age_a_years is not None and age_a_years > 34) else 0
         fighter_b_over_34 = 1 if (age_b_years is not None and age_b_years > 34) else 0
 
-        # Elo — raised cap to ±400 (current max spread is ~270 pts with K=48)
-        elo_delta = max(-400.0, min(400.0, elo_rating_a - elo_rating_b))
+        # Opponent quality — average pre-fight Elo of each fighter's opponents.
+        # Uses elo_snapshots[fight_id][opponent_id] for leakage-free opponent ratings.
+        def _avg_opp_elo(records: list, snaps: dict) -> float:
+            if not records:
+                return INITIAL_ELO
+            elos = [
+                snaps.get(r.fight_id, {}).get(r.opponent_id, INITIAL_ELO)
+                for r in records
+            ]
+            return sum(elos) / len(elos)
+
+        opp_elo_a = _avg_opp_elo(records_a, elo_snapshots)
+        opp_elo_b = _avg_opp_elo(records_b, elo_snapshots)
+        opponent_quality_delta = opp_elo_a - opp_elo_b
+
+        # Elo — shrink toward INITIAL_ELO proportional to fight count uncertainty.
+        # A 3-fight fighter gets ~77% weight on the prior; a 20-fight veteran ~33%.
+        # This prevents a brand-new fighter at 1550 from appearing as confident
+        # as a 20-fight veteran at the same rating.
+        n_a = stats_a.num_fights
+        n_b = stats_b.num_fights
+        elo_a_adj = (n_a * elo_rating_a + ELO_PRIOR_FIGHTS * INITIAL_ELO) / (n_a + ELO_PRIOR_FIGHTS)
+        elo_b_adj = (n_b * elo_rating_b + ELO_PRIOR_FIGHTS * INITIAL_ELO) / (n_b + ELO_PRIOR_FIGHTS)
+        elo_delta = max(-400.0, min(400.0, elo_a_adj - elo_b_adj))
 
         return FeatureVector(
             # Physical
@@ -703,6 +762,10 @@ class FeatureBuilder:
             # Confidence
             low_confidence_a=stats_a.low_confidence,
             low_confidence_b=stats_b.low_confidence,
+            # Fight format (1 = 5 rounds, 0 = 3 rounds or unknown)
+            is_five_round_fight=1 if scheduled_rounds == 5 else 0,
+            # Opponent quality
+            opponent_quality_delta=opponent_quality_delta,
         )
 
 

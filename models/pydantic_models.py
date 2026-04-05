@@ -85,6 +85,7 @@ class FightHistoryResponse(BaseModel):
 class PredictionRequest(BaseModel):
     fighter_a: str
     fighter_b: str
+    scheduled_rounds: Optional[int] = None  # 3 or 5; None = unknown (model defaults to 3-round distribution)
 
 
 class MethodProbs(BaseModel):
@@ -174,6 +175,7 @@ class FightRead(BaseModel):
     method: Optional[str] = None
     round: Optional[int] = None
     time: Optional[str] = None
+    scheduled_rounds: Optional[int] = None
     ufcstats_id: Optional[str] = None
 
 
