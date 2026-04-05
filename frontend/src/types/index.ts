@@ -103,6 +103,8 @@ export interface PredictionResponse {
   key_differentials: KeyDifferentials
   fighter_a_finish_rates: FinishRates
   fighter_b_finish_rates: FinishRates
+  fighter_a_win_method_rates: FinishRates
+  fighter_b_win_method_rates: FinishRates
 }
 
 export interface ScheduledFight {

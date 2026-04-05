@@ -40,7 +40,10 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-FEATURE_COLS: list[str] = [f.name for f in dataclasses.fields(FeatureVector)]
+# win_rate_a/b are metadata exposed for inference-time use (conditional method rates),
+# not model inputs — exclude them from the feature matrix.
+_METADATA_COLS: frozenset[str] = frozenset({"win_rate_a", "win_rate_b"})
+FEATURE_COLS: list[str] = [f.name for f in dataclasses.fields(FeatureVector) if f.name not in _METADATA_COLS]
 MODEL_FILENAME = "xgb_model.joblib"
 REPORT_FILENAME = "training_report.json"
 METHOD_MODEL_FILENAME = "method_model.joblib"

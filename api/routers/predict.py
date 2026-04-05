@@ -48,6 +48,8 @@ def _build_prediction_response(
     method_probs = raw["method_probs"]
     fa_finish = raw["fighter_a_finish_rates"]
     fb_finish = raw["fighter_b_finish_rates"]
+    fa_win_method = raw["fighter_a_win_method_rates"]
+    fb_win_method = raw["fighter_b_win_method_rates"]
 
     # Key differentials from DB values
     reach_delta = (
@@ -100,6 +102,16 @@ def _build_prediction_response(
             ko_tko=round(fb_finish["ko_tko"], 4),
             submission=round(fb_finish["submission"], 4),
             decision=round(fb_finish["decision"], 4),
+        ),
+        fighter_a_win_method_rates=FinishRates(
+            ko_tko=round(fa_win_method["ko_tko"], 4),
+            submission=round(fa_win_method["submission"], 4),
+            decision=round(fa_win_method["decision"], 4),
+        ),
+        fighter_b_win_method_rates=FinishRates(
+            ko_tko=round(fb_win_method["ko_tko"], 4),
+            submission=round(fb_win_method["submission"], 4),
+            decision=round(fb_win_method["decision"], 4),
         ),
     )
 

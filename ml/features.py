@@ -196,6 +196,8 @@ class FeatureVector:
 
     # Career win rate differential
     win_rate_delta: float              # career wins/fights A − B
+    win_rate_a: float                  # raw per-fighter win rate (metadata for conditional method rates)
+    win_rate_b: float
 
     # Total fights (proxy for experience)
     career_fights_a: int
@@ -739,6 +741,8 @@ class FeatureBuilder:
             ),
             # Career win rate and experience
             win_rate_delta=stats_a.win_rate - stats_b.win_rate,
+            win_rate_a=stats_a.win_rate,
+            win_rate_b=stats_b.win_rate,
             career_fights_a=stats_a.num_fights,
             career_fights_b=stats_b.num_fights,
             # Weight class distance (0 = same, 1 = adjacent, 2+ = super fight)

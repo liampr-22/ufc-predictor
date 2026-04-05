@@ -173,6 +173,19 @@ class Predictor:
         win_prob = float(self._model.predict_proba(row)[0, 1])
         method_proba = self._method_model.predict_proba(row)[0]  # shape [3]
 
+        def _normalize(rates: dict) -> dict:
+            total = sum(rates.values())
+            if total <= 0:
+                return {k: 1 / 3 for k in rates}
+            return {k: v / total for k, v in rates.items()}
+
+        def _conditional_win_methods(ko: float, sub: float, dec: float, win_rate: float) -> dict:
+            denom = max(win_rate, 0.01)
+            return _normalize({"ko_tko": ko / denom, "submission": sub / denom, "decision": dec / denom})
+
+        win_rate_a = float(feat_dict.get("win_rate_a", 0.5))
+        win_rate_b = float(feat_dict.get("win_rate_b", 0.5))
+
         return {
             "win_prob_a": win_prob,
             "method_probs": {
@@ -190,4 +203,16 @@ class Predictor:
                 "submission": float(feat_dict.get("sub_rate_b", 0.0)),
                 "decision":   float(feat_dict.get("dec_rate_b", 0.0)),
             },
+            "fighter_a_win_method_rates": _conditional_win_methods(
+                float(feat_dict.get("ko_rate_a", 0.0)),
+                float(feat_dict.get("sub_rate_a", 0.0)),
+                float(feat_dict.get("dec_rate_a", 0.0)),
+                win_rate_a,
+            ),
+            "fighter_b_win_method_rates": _conditional_win_methods(
+                float(feat_dict.get("ko_rate_b", 0.0)),
+                float(feat_dict.get("sub_rate_b", 0.0)),
+                float(feat_dict.get("dec_rate_b", 0.0)),
+                win_rate_b,
+            ),
         }
